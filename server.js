@@ -1,4 +1,4 @@
-Require('dotenv').config();
+require('dotenv').config();
 
 console.log("🔥🔥🔥 THIS IS MY SERVER.JS 🔥🔥🔥");
 
