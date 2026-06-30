@@ -1,51 +1,9 @@
-require('dotenv').config();
-
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
-
-const app = express();
-const PORT = process.env.PORT || 1000;
-
-app.use(cors());
-app.use(express.json());
-
-// الصفحة الرئيسية
-app.get('/', (req, res) => {
-  res.send(`Moamen Server 🔥 - running on port ${PORT}`);
-});
-
-// health check
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
-});
-
-// ✅ الدفع (visa + wallet)
-app.post('/pay', async (req, res) => {
+app.get('/pay-link', async (req, res) => {
   try {
-    const {
-      amount,
-      email,
-      first_name,
-      last_name,
-      payment_method,
-      phone
-    } = req.body;
-
-    if (!amount || !email || !first_name || !last_name || !payment_method) {
-      return res.status(400).json({ error: 'Missing required data' });
-    }
-
-    // 🎯 تحديد نوع الدفع
-    let integrationId;
-
-    if (payment_method === 'card') {
-      integrationId = process.env.PAYMOB_CARD_INTEGRATION_ID;
-    } else if (payment_method === 'wallet') {
-      integrationId = process.env.PAYMOB_WALLET_INTEGRATION_ID;
-    } else {
-      return res.status(400).json({ error: 'Invalid payment method' });
-    }
+    const amount = 100;
+    const email = "test@test.com";
+    const first_name = "Moamen";
+    const last_name = "Test";
 
     // 1️⃣ auth
     const auth = await axios.post(
@@ -83,7 +41,7 @@ app.post('/pay', async (req, res) => {
           email,
           first_name,
           last_name,
-          phone_number: phone || '01000000000',
+          phone_number: '01000000000',
           apartment: 'NA',
           floor: 'NA',
           street: 'NA',
@@ -95,57 +53,21 @@ app.post('/pay', async (req, res) => {
           state: 'NA',
         },
         currency: 'EGP',
-        integration_id: integrationId,
+        integration_id: process.env.PAYMOB_CARD_INTEGRATION_ID,
       }
     );
 
     const paymentKey = payment.data.token;
 
-    // 🎯 لو محفظة
-    if (payment_method === 'wallet') {
-      const walletRes = await axios.post(
-        'https://accept.paymob.com/api/acceptance/payments/pay',
-        {
-          source: {
-            identifier: phone,
-            subtype: 'WALLET',
-          },
-          payment_token: paymentKey,
-        }
-      );
-
-      return res.json({
-        type: 'wallet',
-        redirect_url: walletRes.data.redirect_url,
-      });
-    }
-
-    // 🎯 لو فيزا
     const iframeUrl = `https://accept.paymob.com/api/acceptance/iframes/${process.env.PAYMOB_IFRAME_ID}?payment_token=${paymentKey}`;
 
-    res.json({
-      type: 'card',
-      iframeUrl,
-    });
+    // 🔥 هنا السحر: يحولك مباشرة لصفحة الدفع
+    res.redirect(iframeUrl);
 
   } catch (error) {
-    console.error(error.response?.data || error.message);
     res.status(500).json({
       error: 'Payment failed',
       details: error.response?.data || error.message,
     });
   }
-});
-
-// 404
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Route not found',
-    path: req.originalUrl,
-  });
-});
-
-// تشغيل السيرفر
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
 });
