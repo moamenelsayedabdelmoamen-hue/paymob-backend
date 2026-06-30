@@ -1,3 +1,16 @@
+const express = require('express');
+const axios = require('axios');
+require('dotenv').config();
+
+const app = express();
+app.use(express.json());
+
+// 🟢 Route اختبار
+app.get('/', (req, res) => {
+  res.send('Server is running 🚀');
+});
+
+// 🟢 Payment Link (Visa)
 app.get('/pay-link', async (req, res) => {
   try {
     const amount = 100;
@@ -61,7 +74,7 @@ app.get('/pay-link', async (req, res) => {
 
     const iframeUrl = `https://accept.paymob.com/api/acceptance/iframes/${process.env.PAYMOB_IFRAME_ID}?payment_token=${paymentKey}`;
 
-    // 🔥 هنا السحر: يحولك مباشرة لصفحة الدفع
+    // 🔥 تحويل مباشر لصفحة الدفع
     res.redirect(iframeUrl);
 
   } catch (error) {
@@ -70,4 +83,10 @@ app.get('/pay-link', async (req, res) => {
       details: error.response?.data || error.message,
     });
   }
+});
+
+// 🟢 تشغيل السيرفر
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
