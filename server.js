@@ -20,16 +20,34 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// ✅ route الدفع Paymob
+// ✅ الدفع (visa + wallet)
 app.post('/pay', async (req, res) => {
   try {
-    const { amount, email, first_name, last_name } = req.body;
+    const {
+      amount,
+      email,
+      first_name,
+      last_name,
+      payment_method,
+      phone
+    } = req.body;
 
-    if (!amount || !email || !first_name || !last_name) {
-      return res.status(400).json({ error: 'Missing data' });
+    if (!amount || !email || !first_name || !last_name || !payment_method) {
+      return res.status(400).json({ error: 'Missing required data' });
     }
 
-    // 1️⃣ auth token
+    // 🎯 تحديد نوع الدفع
+    let integrationId;
+
+    if (payment_method === 'card') {
+      integrationId = process.env.PAYMOB_CARD_INTEGRATION_ID;
+    } else if (payment_method === 'wallet') {
+      integrationId = process.env.PAYMOB_WALLET_INTEGRATION_ID;
+    } else {
+      return res.status(400).json({ error: 'Invalid payment method' });
+    }
+
+    // 1️⃣ auth
     const auth = await axios.post(
       'https://accept.paymob.com/api/auth/tokens',
       {
@@ -39,7 +57,7 @@ app.post('/pay', async (req, res) => {
 
     const token = auth.data.token;
 
-    // 2️⃣ create order
+    // 2️⃣ order
     const order = await axios.post(
       'https://accept.paymob.com/api/ecommerce/orders',
       {
@@ -65,7 +83,7 @@ app.post('/pay', async (req, res) => {
           email,
           first_name,
           last_name,
-          phone_number: '01000000000',
+          phone_number: phone || '01000000000',
           apartment: 'NA',
           floor: 'NA',
           street: 'NA',
@@ -77,16 +95,38 @@ app.post('/pay', async (req, res) => {
           state: 'NA',
         },
         currency: 'EGP',
-        integration_id: process.env.PAYMOB_INTEGRATION_ID,
+        integration_id: integrationId,
       }
     );
 
     const paymentKey = payment.data.token;
 
-    // 4️⃣ iframe url
+    // 🎯 لو محفظة
+    if (payment_method === 'wallet') {
+      const walletRes = await axios.post(
+        'https://accept.paymob.com/api/acceptance/payments/pay',
+        {
+          source: {
+            identifier: phone,
+            subtype: 'WALLET',
+          },
+          payment_token: paymentKey,
+        }
+      );
+
+      return res.json({
+        type: 'wallet',
+        redirect_url: walletRes.data.redirect_url,
+      });
+    }
+
+    // 🎯 لو فيزا
     const iframeUrl = `https://accept.paymob.com/api/acceptance/iframes/${process.env.PAYMOB_IFRAME_ID}?payment_token=${paymentKey}`;
 
-    res.json({ iframeUrl });
+    res.json({
+      type: 'card',
+      iframeUrl,
+    });
 
   } catch (error) {
     console.error(error.response?.data || error.message);
@@ -97,7 +137,7 @@ app.post('/pay', async (req, res) => {
   }
 });
 
-// 404 handler
+// 404
 app.use((req, res) => {
   res.status(404).json({
     error: 'Route not found',
