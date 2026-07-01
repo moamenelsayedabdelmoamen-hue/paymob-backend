@@ -9,16 +9,16 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================================
-// ⚙️ إعدادات وبيانات حساب PAYMOB الخاص بك
+// ⚙️ إعدادات وبيانات حساب PAYMOB الخاصة بك
 // ==========================================
 const PAYMOB_API_KEY = "ZXlKaGJHY2lPaUpJVXpVeE1pSXNJblI1Y0NJNklrcFhWQ0o5LmV5SmpiR0Z6Y3lJNklrMWxjbU5vWVc1MElpd2ljSEp2Wm1sc1pWOXdheUk2TWpBM056a3hMQ0p1WVcxbElqb2lhVzVwZEdsaGJDSjkuay1jOWpMUlJKMDBmWHNMZkVUdXFXdnltcllOejdhWFRyeTg4ZlJXcHE4VVg2MkFINE1aN3FuSkRFVXBPWFJYOVhEMVpDaENZS3FzZFVxN2w4WmVFWHc=";
 
-// معرفات التكامل (Integration IDs) من واقع لوحة التحكم بتاعتك
-const CARD_INTEGRATION_ID = "313047";   // معرف تكامل الفيزا أونلاين الخاص بك
-const WALLET_INTEGRATION_ID = "313046"; // معرف تكامل المحفظة الخاص بك
+// معرفات التكامل (Integration IDs) الخاصة بحسابك
+const CARD_INTEGRATION_ID = "313047";   // معرف تكامل الفيزا أونلاين
+const WALLET_INTEGRATION_ID = "313046"; // معرف تكامل المحفظة الإلكترونية
 
 // معرف الإطار (Iframe ID) الخاص بالفيزا
-const CARD_IFRAME_ID = "706974";       // معرف الـ Iframe الخاص بالـ Card الخاص بك
+const CARD_IFRAME_ID = "706974";       // معرف الـ Iframe الخاص بالـ Card
 
 
 // ==========================================
@@ -152,6 +152,19 @@ app.post('/webhook', (req, res) => {
 
   // 🚨 هام جداً: الرد بـ 200 لتأكيد استلام الإشعار لـ Paymob
   res.status(200).send('OK');
+});
+
+
+// ==========================================
+// 🏠 3. مسار إعادة توجيه العميل (GET /callback)
+// ==========================================
+app.get('/callback', (req, res) => {
+  res.send(`
+    <div style="text-align:center; margin-top:100px; font-family:sans-serif;">
+      <h1 style="color:#2ecc71; font-size: 32px; margin-bottom: 10px;">🎉 تم اكتمال العملية بنجاح!</h1>
+      <p style="color:#34495e; font-size: 18px;">شكراً لك، يمكنك العودة إلى التطبيق الآن ومتابعة استخدام حسابك.</p>
+    </div>
+  `);
 });
 
 
