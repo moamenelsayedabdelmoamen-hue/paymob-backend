@@ -1,104 +1,164 @@
-require('dotenv').config(); // تأكدنا إنها بحرف r صغير تماماً
-
 const express = require('express');
-const cors = require('cors');
 const axios = require('axios');
+const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 1000;
 
+// تفعيل الـ CORS لتفادي مشاكل حظر المتصفح أثناء المعاينة
 app.use(cors());
 app.use(express.json());
 
-// الصفحة الرئيسية للاختبار
-app.get('/', (req, res) => {
-  res.send(`Moamen Server 🔥 - running on port ${PORT}`);
-});
+// ==========================================
+// ⚙️ إعدادات وبيانات حساب PAYMOB الخاص بك
+// ==========================================
+const PAYMOB_API_KEY = "ZXlKaGJHY2lPaUpJVXpVeE1pSXNJblI1Y0NJNklrcFhWQ0o5LmV5SmpiR0Z6Y3lJNklrMWxjbU5vWVc1MElpd2ljSEp2Wm1sc1pWOXdheUk2TWpBM056a3hMQ0p1WVcxbElqb2lhVzVwZEdsaGJDSjkuay1jOWpMUlJKMDBmWHNMZkVUdXFXdnltcllOejdhWFRyeTg4ZlJXcHE4VVg2MkFINE1aN3FuSkRFVXBPWFJYOVhEMVpDaENZS3FzZFVxN2w4WmVFWHc=";
 
-// اختبار حالة السيرفر
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
-});
+// معرفات التكامل (Integration IDs) من واقع لوحة التحكم بتاعتك
+const CARD_INTEGRATION_ID = "313047";   // معرف تكامل الفيزا أونلاين الخاص بك
+const WALLET_INTEGRATION_ID = "313046"; // معرف تكامل المحفظة الخاص بك
 
-// ✅ Route الدفع الشامل (فيزا + محفظة إلكترونية)
+// معرف الإطار (Iframe ID) الخاص بالفيزا
+const CARD_IFRAME_ID = "706974";       // معرف الـ Iframe الخاص بالـ Card الخاص بك
+
+
+// ==========================================
+// 💳 1. مسار إنشاء طلب الدفع (POST /pay)
+// ==========================================
 app.post('/pay', async (req, res) => {
   try {
     const { amount, email, first_name, last_name, payment_method, phone_number } = req.body;
 
-    // التأكد من البيانات الأساسية
+    // التحقق من وجود البيانات الأساسية المطلوبة للطلب
     if (!amount || !email || !first_name || !last_name || !payment_method) {
-      return res.status(400).json({ error: 'Missing required data' });
+      return res.status(400).json({ error: "Missing required data" });
     }
 
-    // إذا اختار محفظة، يجب وجود رقم الهاتف
+    // إذا كان الاختيار محفظة ولم يتم إرسال رقم الهاتف
     if (payment_method === 'wallet' && !phone_number) {
-      return res.status(400).json({ error: 'Phone number is required for wallet' });
+      return res.status(400).json({ error: "Phone number is required for wallet payments" });
     }
 
-    // 1️⃣ خطوة الـ Auth Token
-    const auth = await axios.post('https://accept.paymob.com/api/auth/tokens', {
-      api_key: process.env.PAYMOB_API_KEY,
+    console.log(`🔄 بدء معالجة طلب دفع بمبلغ ${amount} جنيه عبر (${payment_method})...`);
+
+    // --- الخطوة الأولى: الحصول على Auth Token من Paymob ---
+    const authResponse = await axios.post('https://accept.paymob.com/api/auth/tokens', {
+      api_key: PAYMOB_API_KEY
     });
-    const token = auth.data.token;
+    const authToken = authResponse.data.token;
 
-    // 2️⃣ خطوة إنشاء الطلب Create Order
-    const order = await axios.post('https://accept.paymob.com/api/ecommerce/orders', {
-      auth_token: token,
-      delivery_needed: false,
-      amount_cents: amount * 100, // تحويل القرش لجنيه
-      currency: 'EGP',
-      items: [],
+    // --- الخطوة الثانية: تسجيل الطلب (Order Registration) ---
+    const amountInCents = amount * 100; // بايموب يتعامل بالقروش (الجنيه = 100 قرش)
+    const orderResponse = await axios.post('https://accept.paymob.com/api/ecommerce/orders', {
+      auth_token: authToken,
+      delivery_needed: "false",
+      amount_cents: amountInCents.toString(),
+      currency: "EGP",
+      items: []
     });
-    const orderId = order.data.id;
+    const orderId = orderResponse.data.id;
 
-    // تحديد الـ Integration ID بناءً على طريقة الدفع
-    const integrationId = payment_method === 'wallet' 
-      ? process.env.PAYMOB_WALLET_INTEGRATION_ID 
-      : process.env.PAYMOB_CARD_INTEGRATION_ID;
+    // تحديد الـ Integration ID بناءً على طريقة الدفع المختارة
+    const integrationId = (payment_method === 'wallet') ? WALLET_INTEGRATION_ID : CARD_INTEGRATION_ID;
 
-    // 3️⃣ خطوة الـ Payment Key
-    const payment = await axios.post('https://accept.paymob.com/api/acceptance/payment_keys', {
-      auth_token: token,
-      amount_cents: amount * 100,
+    // --- الخطوة الثالثة: إصدار مفتاح الدفع (Payment Key Generation) ---
+    const paymentKeyResponse = await axios.post('https://accept.paymob.com/api/acceptance/payment_keys', {
+      auth_token: authToken,
+      amount_cents: amountInCents.toString(),
       expiration: 3600,
       order_id: orderId,
       billing_data: {
-        email, first_name, last_name,
-        phone_number: phone_number || '01000000000',
-        apartment: 'NA', floor: 'NA', street: 'NA', building: 'NA', shipping_method: 'NA', postal_code: '12345', city: 'Cairo', country: 'EG', state: 'NA',
+        apartment: "NA",
+        email: email,
+        floor: "NA",
+        first_name: first_name,
+        street: "NA",
+        building: "NA",
+        phone_number: phone_number || "01000000000", // قيمة افتراضية للفيزا إذا لم تتوفر
+        shipping_method: "NA",
+        postal_code: "NA",
+        city: "Sadat City",
+        country: "EG",
+        last_name: last_name,
+        state: "NA"
       },
-      currency: 'EGP',
+      currency: "EGP",
       integration_id: integrationId,
+      lock_order_when_paid: "true"
     });
-    const paymentKey = payment.data.token;
+    const paymentToken = paymentKeyResponse.data.token;
 
-    // 4️⃣ الخطوة النهائية (حسب نوع الدفع)
+    // --- الخطوة الرابعة: إنشاء الرابط النهائي بناءً على طريقة الدفع ---
     if (payment_method === 'wallet') {
-      // مسار المحفظة الإلكترونية
-      const walletResponse = await axios.post('https://accept.paymob.com/api/acceptance/payments/pay', {
+      // طلب رابط الدفع الخاص بالمحافظ الإلكترونية
+      const walletPayResponse = await axios.post('https://accept.paymob.com/api/acceptance/payments/pay', {
         source: {
           identifier: phone_number,
           subtype: "WALLET"
         },
-        payment_token: paymentKey
+        payment_token: paymentToken
       });
-      return res.json({ url: walletResponse.data.redirect_url, type: 'wallet' });
+
+      // الرابط الذي سيتوجه إليه العميل لوضع الـ OTP الخاص بالمحفظة
+      const redirectUrl = walletPayResponse.data.iframe_redirection_url;
+      return res.status(200).json({ url: redirectUrl, type: "wallet" });
+
     } else {
-      // مسار الفيزا كارد
-      const iframeUrl = `https://accept.paymob.com/api/acceptance/iframes/${process.env.PAYMOB_IFRAME_ID}?payment_token=${paymentKey}`;
-      return res.json({ url: iframeUrl, type: 'card' });
+      // للدفع بالبطاقات (الفيزا/الماستر كارد): ندمج الـ Token داخل رابط الـ Iframe مباشرة
+      const cardIframeUrl = `https://accept.paymob.com/api/acceptance/iframes/${CARD_IFRAME_ID}?payment_token=${paymentToken}`;
+      return res.status(200).json({ url: cardIframeUrl, type: "card" });
     }
 
   } catch (error) {
-    console.error("PAYMOB ERROR:", error.response?.data || error.message);
-    res.status(500).json({
-      error: 'Payment failed',
-      details: error.response?.data || error.message,
+    console.error("❌ حدث خطأ أثناء معالجة عملية الدفع:", error.response ? error.response.data : error.message);
+    return res.status(500).json({
+      error: "Payment failed",
+      details: error.response ? error.response.data : error.message
     });
   }
 });
 
-// تشغيل السيرفر
+
+// ==========================================
+// 🌐 2. مسار استقبال الويب هوك (POST /webhook)
+// ==========================================
+app.post('/webhook', (req, res) => {
+  const data = req.body;
+  
+  console.log("\n=========================================");
+  console.log("📥 الإشعار (WEBHOOK) تم استقباله من PAYMOB");
+  console.log("=========================================");
+  
+  // استخراج تفاصيل المعاملة المالية
+  const isSuccess = data.obj?.success;
+  const orderId = data.obj?.order?.id;
+  const amount = data.obj?.amount_cents / 100;
+  const userEmail = data.obj?.billing_data?.email;
+  const transactionId = data.obj?.id;
+
+  if (isSuccess === true) {
+    console.log(`✅ [عملية ناجحة]`);
+    console.log(`👤 العميل: ${userEmail}`);
+    console.log(`💰 المبلغ: ${amount} جنيه مصري`);
+    console.log(`📦 رقم الطلب (Order ID): ${orderId}`);
+    console.log(`🎫 رقم الإيصال (Transaction ID): ${transactionId}`);
+    
+    // 💡 (هنا مستقبلاً تضع كود تحديث الـ Database الخاص بتطبيقك لتفعيل اشتراك العميل تلقائياً)
+
+  } else {
+    console.log(`❌ [عملية فاشلة / مرفوضة]`);
+    console.log(`📦 رقم الطلب (Order ID): ${orderId}`);
+    console.log(`💬 سبب الرفض: ${data.obj?.data?.message || "غير محدد"}`);
+  }
+
+  // 🚨 هام جداً: الرد بـ 200 لتأكيد استلام الإشعار لـ Paymob
+  res.status(200).send('OK');
+});
+
+
+// ==========================================
+// 🚀 تشغيل السيرفر على المنفذ المحدد
+// ==========================================
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 السيرفر يعمل بنجاح على بورت: ${PORT}`);
 });
