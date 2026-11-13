@@ -1,20 +1,23 @@
 require('dotenv').config();
 const admin = require('firebase-admin');
+const fs = require('fs');
 
 let firestore = null;
 
 function initializeFirebase() {
+  const secretFile = process.env.FIREBASE_SERVICE_ACCOUNT_FILE || '/etc/secrets/firebase-service-account.json';
   const encodedCredentials = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
 
-  if (!encodedCredentials) {
-    console.warn('⚠️ Firebase is not configured. Set FIREBASE_SERVICE_ACCOUNT_BASE64.');
+  if (!fs.existsSync(secretFile) && !encodedCredentials) {
+    console.warn('⚠️ Firebase is not configured. Add the Render secret file or FIREBASE_SERVICE_ACCOUNT_BASE64.');
     return null;
   }
 
   try {
-    const serviceAccount = JSON.parse(
-      Buffer.from(encodedCredentials, 'base64').toString('utf8')
-    );
+    const credentialsJson = fs.existsSync(secretFile)
+      ? fs.readFileSync(secretFile, 'utf8')
+      : Buffer.from(encodedCredentials, 'base64').toString('utf8');
+    const serviceAccount = JSON.parse(credentialsJson);
 
     if (!serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
       throw new Error('Service account JSON must include project_id, client_email, and private_key.');
