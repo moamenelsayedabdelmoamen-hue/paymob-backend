@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { getDatabase } = require('./firebase');
+const { getFirestore } = require('../firebase');
 
 const PAYMOB_HMAC_FIELDS = [
   'amount_cents',
@@ -45,20 +45,19 @@ function isValidPaymobHmac(obj, receivedHmac) {
   return received.length === expected.length && crypto.timingSafeEqual(received, expected);
 }
 
-function safeKey(value) {
-  const key = String(value ?? '');
-  if (!/^[A-Za-z0-9_-]+$/.test(key)) {
-    throw new Error('Invalid Firebase record key.');
+function safeDocumentId(value) {
+  const id = String(value ?? '');
+  if (!id || id.includes('/')) {
+    throw new Error('Invalid Firestore document ID.');
   }
-  return key;
+  return id;
 }
 
 async function recordPaymentEvent({ orderId, transactionId, status, amountCents, currency, source }) {
-  const database = getDatabase();
-  if (!database) throw new Error('Firebase is not configured.');
+  const db = getFirestore();
+  if (!db) throw new Error('Cloud Firestore is not configured.');
 
-  const orderKey = safeKey(orderId);
-  const eventKey = database.ref('operation_logs').push().key;
+  const orderKey = safeDocumentId(orderId);
   const timestamp = new Date().toISOString();
   const event = {
     action: source,
@@ -71,26 +70,28 @@ async function recordPaymentEvent({ orderId, transactionId, status, amountCents,
     createdAt: timestamp,
   };
 
-  const updates = {
-    [`payments/${orderKey}/orderId`]: String(orderId),
-    [`payments/${orderKey}/transactionId`]: event.transactionId,
-    [`payments/${orderKey}/status`]: status,
-    [`payments/${orderKey}/amountCents`]: event.amountCents,
-    [`payments/${orderKey}/currency`]: event.currency,
-    [`payments/${orderKey}/updatedAt`]: timestamp,
-    [`operation_logs/${eventKey}`]: event,
-  };
+  const paymentRef = db.collection('payments').doc(orderKey);
+  const logRef = db.collection('operation_logs').doc();
+  const batch = db.batch();
 
-  await database.ref().update(updates);
+  batch.set(paymentRef, {
+    orderId: String(orderId),
+    transactionId: event.transactionId,
+    status,
+    amountCents: event.amountCents,
+    currency: event.currency,
+    updatedAt: timestamp,
+  }, { merge: true });
+  batch.set(logRef, event);
+  await batch.commit();
 }
 
 async function recordWebhookEvent(data) {
-  const database = getDatabase();
-  if (!database) throw new Error('Firebase is not configured.');
+  const db = getFirestore();
+  if (!db) throw new Error('Cloud Firestore is not configured.');
 
-  const eventKey = database.ref('webhook_events').push().key;
   const obj = data.obj || {};
-  await database.ref(`webhook_events/${eventKey}`).set({
+  await db.collection('webhook_events').add({
     transactionId: obj.id == null ? null : String(obj.id),
     orderId: obj.order?.id == null ? null : String(obj.order.id),
     success: obj.success === true,

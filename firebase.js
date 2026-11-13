@@ -1,14 +1,13 @@
 require('dotenv').config();
 const admin = require('firebase-admin');
 
-let database = null;
+let firestore = null;
 
 function initializeFirebase() {
   const encodedCredentials = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
-  const databaseURL = process.env.FIREBASE_DATABASE_URL;
 
-  if (!encodedCredentials || !databaseURL) {
-    console.warn('⚠️ Firebase is not configured. Set FIREBASE_SERVICE_ACCOUNT_BASE64 and FIREBASE_DATABASE_URL.');
+  if (!encodedCredentials) {
+    console.warn('⚠️ Firebase is not configured. Set FIREBASE_SERVICE_ACCOUNT_BASE64.');
     return null;
   }
 
@@ -24,30 +23,30 @@ function initializeFirebase() {
     if (!admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        databaseURL,
+        projectId: serviceAccount.project_id,
       });
     }
 
-    database = admin.database();
-    console.log('✅ Firebase Realtime Database connected.');
-    return database;
+    firestore = admin.firestore();
+    console.log(`✅ Cloud Firestore initialized for project ${serviceAccount.project_id}.`);
+    return firestore;
   } catch (error) {
-    // Keep the HTTP service alive so Render can complete deployment and /health
-    // can report the issue. Payment endpoints already return 503 without Firebase.
-    database = null;
-    console.error('❌ Firebase initialization failed; payment operations are unavailable:', error.message);
+    // Keep the HTTP service available so Render can complete deployment and /health
+    // can report the issue. Payment endpoints return 503 without Firestore.
+    firestore = null;
+    console.error('❌ Cloud Firestore initialization failed; payment operations are unavailable:', error.message);
     return null;
   }
 }
 
 function isFirebaseConfigured() {
-  return Boolean(database);
+  return Boolean(firestore);
 }
 
-function getDatabase() {
-  return database;
+function getFirestore() {
+  return firestore;
 }
 
 initializeFirebase();
 
-module.exports = { admin, getDatabase, isFirebaseConfigured };
+module.exports = { admin, getFirestore, isFirebaseConfigured };
