@@ -1,0 +1,47 @@
+name: Dependency remediation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: security/baseline-hardening
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Regenerate lockfile from package.json
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Apply non-breaking security updates
+        run: npm audit fix --ignore-scripts
+      - name: Install exactly from updated lockfile
+        run: npm ci
+      - name: Run tests when available
+        run: |
+          if npm run | grep -qE '^[[:space:]]+test'; then
+            npm test -- --runInBand
+          else
+            echo "No test script is defined; skipping test command."
+          fi
+      - name: Verify no high or critical advisories remain
+        run: npm audit --audit-level=high
+      - name: Commit updated manifests
+        run: |
+          if ! git diff --quiet -- package.json package-lock.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json
+            git commit -m "chore(security): remediate npm dependency vulnerabilities"
+            git push origin HEAD:security/baseline-hardening
+          else
+            echo "No dependency changes were required."
+          fi
