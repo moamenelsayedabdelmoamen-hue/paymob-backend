@@ -3,6 +3,24 @@ services:
     name: paymob-backend
     env: node
     plan: free
-    buildCommand: npm install
-    startCommand: node server.js
     branch: main
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FIREBASE_DATABASE_URL
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_BASE64
+        sync: false
+      - key: PAYMOB_API_KEY
+        sync: false
+      - key: PAYMOB_HMAC_SECRET
+        sync: false
+      - key: CARD_INTEGRATION_ID
+        sync: false
+      - key: WALLET_INTEGRATION_ID
+        sync: false
+      - key: CARD_IFRAME_ID
+        sync: false

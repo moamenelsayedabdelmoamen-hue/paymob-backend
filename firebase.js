@@ -32,8 +32,11 @@ function initializeFirebase() {
     console.log('✅ Firebase Realtime Database connected.');
     return database;
   } catch (error) {
-    console.error('❌ Firebase initialization failed:', error.message);
-    throw error;
+    // Keep the HTTP service alive so Render can complete deployment and /health
+    // can report the issue. Payment endpoints already return 503 without Firebase.
+    database = null;
+    console.error('❌ Firebase initialization failed; payment operations are unavailable:', error.message);
+    return null;
   }
 }
 
