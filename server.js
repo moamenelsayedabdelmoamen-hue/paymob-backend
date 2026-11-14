@@ -10,7 +10,15 @@ const {
 } = require('./utils/firebasePayments');
 
 const app = express();
-app.use(cors({ origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map((value) => value.trim()).filter(Boolean) : false }));
+const allowedOrigins = (process.env.CORS_ORIGINS || 'https://elbatalexpress.web.app').split(',').map((value) => value.trim()).filter(Boolean);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Origin is not allowed by CORS'));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json({ limit: '32kb' }));
 
 const PAYMOB_API_KEY = process.env.PAYMOB_API_KEY;
