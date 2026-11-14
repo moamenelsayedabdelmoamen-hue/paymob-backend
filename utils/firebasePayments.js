@@ -50,6 +50,9 @@ async function recordPaymentEvent({ orderId, transactionId, status, amountCents,
     if (existing.exists) throw new Error('Payment order already exists.');
     tx.create(paymentRef, {
       orderId: orderKey,
+      restaurantId: restaurantId || '',
+      restaurantName: restaurantName || '',
+      paymentMethod: paymentMethod || 'Paymob',
       transactionId: null,
       status: 'pending',
       amountCents: amount,
