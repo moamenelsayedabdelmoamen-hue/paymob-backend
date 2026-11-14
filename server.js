@@ -6,12 +6,12 @@ const { isFirebaseConfigured } = require('./firebase');
 const {
   isValidPaymobHmac,
   recordPaymentEvent,
-  recordWebhookEvent,
+  applyVerifiedWebhook,
 } = require('./utils/firebasePayments');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(cors({ origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map((value) => value.trim()).filter(Boolean) : false }));
+app.use(express.json({ limit: '32kb' }));
 
 const PAYMOB_API_KEY = process.env.PAYMOB_API_KEY;
 const CARD_INTEGRATION_ID = process.env.CARD_INTEGRATION_ID;
@@ -97,6 +97,7 @@ app.post('/pay', async (req, res) => {
       status: 'pending',
       amountCents: amountInCents,
       currency: 'EGP',
+      integrationId,
       source: 'payment.created',
     });
 
@@ -135,17 +136,8 @@ app.post('/webhook', async (req, res) => {
     const orderId = obj.order?.id;
     if (orderId == null) return res.status(400).send('Missing Paymob order ID');
 
-    const status = obj.success === true ? 'success' : 'failed';
-    await recordPaymentEvent({
-      orderId,
-      transactionId: obj.id,
-      status,
-      amountCents: obj.amount_cents,
-      currency: obj.currency,
-      source: `payment.${status}`,
-    });
-    await recordWebhookEvent(req.body);
-    return res.status(200).send('OK');
+    const result = await applyVerifiedWebhook(obj);
+    return res.status(200).send(result.duplicate ? 'Already processed' : 'OK');
   } catch (error) {
     console.error('❌ Could not persist Paymob webhook:', error.message);
     return res.status(500).send('Could not persist webhook');

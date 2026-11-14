@@ -2,26 +2,11 @@ const crypto = require('crypto');
 const { getFirestore } = require('../firebase');
 
 const PAYMOB_HMAC_FIELDS = [
-  'amount_cents',
-  'created_at',
-  'currency',
-  'error_occured',
-  'has_parent_transaction',
-  'id',
-  'integration_id',
-  'is_3d_secure',
-  'is_auth',
-  'is_capture',
-  'is_refunded',
-  'is_standalone_payment',
-  'is_voided',
-  'order.id',
-  'owner',
-  'pending',
-  'source_data.pan',
-  'source_data.sub_type',
-  'source_data.type',
-  'success',
+  'amount_cents', 'created_at', 'currency', 'error_occured',
+  'has_parent_transaction', 'id', 'integration_id', 'is_3d_secure',
+  'is_auth', 'is_capture', 'is_refunded', 'is_standalone_payment',
+  'is_voided', 'order.id', 'owner', 'pending', 'source_data.pan',
+  'source_data.sub_type', 'source_data.type', 'success',
 ];
 
 function getNestedValue(object, path) {
@@ -31,15 +16,11 @@ function getNestedValue(object, path) {
 function isValidPaymobHmac(obj, receivedHmac) {
   const secret = process.env.PAYMOB_HMAC_SECRET;
   if (!secret || !receivedHmac || !obj) return false;
-
-  const message = PAYMOB_HMAC_FIELDS
-    .map((field) => {
-      const value = getNestedValue(obj, field);
-      return value === undefined || value === null ? '' : String(value);
-    })
-    .join('');
+  const message = PAYMOB_HMAC_FIELDS.map((field) => {
+    const value = getNestedValue(obj, field);
+    return value === undefined || value === null ? '' : String(value);
+  }).join('');
   const expected = crypto.createHmac('sha512', secret).update(message).digest();
-
   if (!/^[a-f0-9]{128}$/i.test(receivedHmac)) return false;
   const received = Buffer.from(receivedHmac, 'hex');
   return received.length === expected.length && crypto.timingSafeEqual(received, expected);
@@ -47,57 +28,112 @@ function isValidPaymobHmac(obj, receivedHmac) {
 
 function safeDocumentId(value) {
   const id = String(value ?? '');
-  if (!id || id.includes('/')) {
-    throw new Error('Invalid Firestore document ID.');
-  }
+  if (!id || id.includes('/') || id.length > 1500) throw new Error('Invalid Firestore document ID.');
   return id;
 }
 
-async function recordPaymentEvent({ orderId, transactionId, status, amountCents, currency, source }) {
+async function recordPaymentEvent({ orderId, transactionId, status, amountCents, currency, integrationId, source }) {
   const db = getFirestore();
   if (!db) throw new Error('Cloud Firestore is not configured.');
-
   const orderKey = safeDocumentId(orderId);
-  const timestamp = new Date().toISOString();
-  const event = {
-    action: source,
-    collection: 'payments',
-    orderId: String(orderId),
-    transactionId: transactionId == null ? null : String(transactionId),
-    status,
-    amountCents: amountCents == null ? null : Number(amountCents),
-    currency: currency || null,
-    createdAt: timestamp,
-  };
+  const amount = Number(amountCents);
+  if (!Number.isSafeInteger(amount) || amount <= 0 || currency !== 'EGP') {
+    throw new Error('Invalid payment amount or currency.');
+  }
+  if (status !== 'pending') throw new Error('Final payment states must be applied through verified webhook processing.');
 
   const paymentRef = db.collection('payments').doc(orderKey);
   const logRef = db.collection('operation_logs').doc();
-  const batch = db.batch();
-
-  batch.set(paymentRef, {
-    orderId: String(orderId),
-    transactionId: event.transactionId,
-    status,
-    amountCents: event.amountCents,
-    currency: event.currency,
-    updatedAt: timestamp,
-  }, { merge: true });
-  batch.set(logRef, event);
-  await batch.commit();
-}
-
-async function recordWebhookEvent(data) {
-  const db = getFirestore();
-  if (!db) throw new Error('Cloud Firestore is not configured.');
-
-  const obj = data.obj || {};
-  await db.collection('webhook_events').add({
-    transactionId: obj.id == null ? null : String(obj.id),
-    orderId: obj.order?.id == null ? null : String(obj.order.id),
-    success: obj.success === true,
-    receivedAt: new Date().toISOString(),
-    verified: true,
+  const timestamp = new Date().toISOString();
+  await db.runTransaction(async (tx) => {
+    const existing = await tx.get(paymentRef);
+    if (existing.exists) throw new Error('Payment order already exists.');
+    tx.create(paymentRef, {
+      orderId: orderKey,
+      transactionId: null,
+      status: 'pending',
+      amountCents: amount,
+      currency: 'EGP',
+      integrationId: integrationId == null ? null : Number(integrationId),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    tx.create(logRef, {
+      action: source || 'payment.created',
+      collection: 'payments',
+      orderId: orderKey,
+      status: 'pending',
+      amountCents: amount,
+      currency: 'EGP',
+      createdAt: timestamp,
+    });
   });
 }
 
-module.exports = { isValidPaymobHmac, recordPaymentEvent, recordWebhookEvent };
+async function applyVerifiedWebhook(obj) {
+  const db = getFirestore();
+  if (!db) throw new Error('Cloud Firestore is not configured.');
+  const orderId = safeDocumentId(obj?.order?.id);
+  const transactionId = safeDocumentId(obj?.id);
+  const amount = Number(obj?.amount_cents);
+  const currency = String(obj?.currency || '');
+  const integrationId = Number(obj?.integration_id);
+  if (!Number.isSafeInteger(amount) || amount <= 0 || currency !== 'EGP' || !Number.isSafeInteger(integrationId)) {
+    throw new Error('Webhook amount, currency, or integration ID is invalid.');
+  }
+
+  const paymentRef = db.collection('payments').doc(orderId);
+  const transactionRef = db.collection('paymob_transactions').doc(transactionId);
+  const logRef = db.collection('operation_logs').doc();
+  const timestamp = new Date().toISOString();
+  const status = obj.success === true ? 'success' : 'failed';
+
+  return db.runTransaction(async (tx) => {
+    const [paymentSnap, transactionSnap] = await Promise.all([
+      tx.get(paymentRef),
+      tx.get(transactionRef),
+    ]);
+    if (transactionSnap.exists) return { duplicate: true };
+    if (!paymentSnap.exists) throw new Error('No pending payment matches this Paymob order.');
+    const expected = paymentSnap.data();
+    if (expected.status !== 'pending') throw new Error('Payment is already in a final state.');
+    if (Number(expected.amountCents) !== amount || expected.currency !== currency) {
+      throw new Error('Paymob amount or currency does not match the pending payment.');
+    }
+    if (expected.integrationId != null && Number(expected.integrationId) !== integrationId) {
+      throw new Error('Paymob integration does not match the pending payment.');
+    }
+
+    tx.update(paymentRef, {
+      transactionId,
+      status,
+      amountCents: amount,
+      currency,
+      integrationId,
+      updatedAt: timestamp,
+    });
+    tx.create(transactionRef, {
+      transactionId,
+      orderId,
+      status,
+      amountCents: amount,
+      currency,
+      integrationId,
+      verified: true,
+      receivedAt: timestamp,
+    });
+    tx.create(logRef, {
+      action: `payment.${status}`,
+      collection: 'payments',
+      orderId,
+      transactionId,
+      status,
+      amountCents: amount,
+      currency,
+      createdAt: timestamp,
+    });
+    return { duplicate: false, status };
+  });
+}
+
+module.exports = { isValidPaymobHmac, recordPaymentEvent, applyVerifiedWebhook };
