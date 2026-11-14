@@ -10,7 +10,7 @@ const {
 } = require('./utils/firebasePayments');
 
 const app = express();
-const allowedOrigins = (process.env.CORS_ORIGINS || 'https://elbatalexpress.web.app').split(',').map((value) => value.trim()).filter(Boolean);
+const allowedOrigins = [...new Set(['https://elbatalexpress.web.app', ...(process.env.CORS_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean)])];
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
