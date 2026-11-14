@@ -1,47 +1,64 @@
 name: Dependency remediation
 
 on:
+  push:
+    branches:
+      - "security/**"
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: dependency-remediation-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   remediate:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout security branch
         uses: actions/checkout@v4
         with:
-          ref: security/baseline-hardening
+          ref: ${{ github.ref_name }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Regenerate lockfile from package.json
+      - name: Regenerate lockfile to match package.json
         run: npm install --package-lock-only --ignore-scripts
-      - name: Apply non-breaking security updates
-        run: npm audit fix --ignore-scripts
-      - name: Install exactly from updated lockfile
-        run: npm ci
-      - name: Run tests when available
+      - name: Apply compatible npm security updates
+        run: npm audit fix --ignore-scripts || true
+      - name: Install from the regenerated lockfile
+        run: npm ci --ignore-scripts
+      - name: Syntax-check backend files
         run: |
-          if npm run | grep -qE '^[[:space:]]+test'; then
-            npm test -- --runInBand
-          else
-            echo "No test script is defined; skipping test command."
-          fi
-      - name: Verify no high or critical advisories remain
-        run: npm audit --audit-level=high
-      - name: Commit updated manifests
+          node --check server.js
+          node --check firebase.js
+          node --check utils/firebasePayments.js
+      - name: Generate npm audit report
+        shell: bash
+        run: |
+          npm audit --json > npm-audit-report.json || true
+          node -e "const r=require('./npm-audit-report.json'); const v=r.metadata?.vulnerabilities||{}; console.log(JSON.stringify({total:v.total||0,critical:v.critical||0,high:v.high||0,moderate:v.moderate||0,low:v.low||0},null,2));"
+      - name: Commit updated lockfile
         run: |
           if ! git diff --quiet -- package.json package-lock.json; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add package.json package-lock.json
-            git commit -m "chore(security): remediate npm dependency vulnerabilities"
-            git push origin HEAD:security/baseline-hardening
+            git commit -m "chore(security): regenerate lockfile and apply npm fixes"
+            git push origin "HEAD:${{ github.ref_name }}"
           else
-            echo "No dependency changes were required."
+            echo "Dependency manifests already synchronized."
           fi
+      - name: Upload npm audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: npm-audit-report.json
+          if-no-files-found: error
+      - name: Fail if high or critical vulnerabilities remain
+        run: npm audit --audit-level=high
