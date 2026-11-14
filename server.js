@@ -81,7 +81,10 @@ app.post('/pay', async (req, res) => {
     const price = Number(sub?.price ?? sub?.subscriptionPrice ?? sub?.subscription?.price ??
       merchant.subscriptionPrice ?? merchant.subscription?.price ?? merchant.price);
     const amountInCents = Math.round(price * 100);
-    if (!Number.isSafeInteger(amountInCents) || amountInCents <= 0) return res.status(409).json({ error: 'Valid subscription price is not configured.' });
+    const packageCaptains = { 400: 2, 800: 4, 1200: 6, 1600: 8 };
+    if (!Number.isSafeInteger(amountInCents) || !packageCaptains[price]) {
+      return res.status(409).json({ error: 'Subscription price must match an official package (400, 800, 1200, or 1600 EGP).' });
+    }
 
     const authResponse = await axios.post('https://accept.paymob.com/api/auth/tokens', { api_key: PAYMOB_API_KEY }, { timeout: 15000 });
     const authToken = authResponse.data.token;
