@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-const { isFirebaseConfigured } = require('./firebase');
+const { admin, getFirestore, isFirebaseConfigured } = require('./firebase');
 const {
   isValidPaymobHmac,
   recordPaymentEvent,
@@ -46,29 +46,38 @@ app.post('/pay', async (req, res) => {
     catch { return res.status(401).json({ error: 'Invalid or expired Firebase token.' }); }
 
     const db = getFirestore();
-    const adminDoc = await db.collection('admins').doc(decoded.uid).get();
-    const authorized = decoded.admin === true || decoded.role === 'admin' ||
-      (adminDoc.exists && ['admin'].includes(adminDoc.data().role) &&
-        (adminDoc.data().isAdmin === true || adminDoc.data().isSuperAdmin === true || adminDoc.data().role === 'admin'));
-    if (!authorized) return res.status(403).json({ error: 'Administrator permission is required.' });
-
     const { restaurant_id, email, first_name, last_name, payment_method, phone_number } = req.body || {};
+    if (!restaurant_id) return res.status(400).json({ error: 'Merchant ID is required.' });
+
+    const [adminDoc, merchantSnap] = await Promise.all([
+      db.collection('admins').doc(decoded.uid).get(),
+      db.collection('restaurants').doc(String(restaurant_id)).get(),
+    ]);
+    const adminData = adminDoc.exists ? adminDoc.data() : {};
+    const isAdmin = decoded.admin === true || decoded.role === 'admin' ||
+      adminData.role === 'admin' || adminData.isAdmin === true || adminData.isSuperAdmin === true;
+    const merchantData = merchantSnap.exists ? merchantSnap.data() : {};
+    const isMerchantOwner = merchantSnap.exists && (
+      merchantData.ownerUid === decoded.uid ||
+      decoded.restaurantId === String(restaurant_id) ||
+      decoded.uid === String(restaurant_id)
+    );
+    if (!isAdmin && !isMerchantOwner) {
+      return res.status(403).json({ error: 'You are not authorized to pay for this merchant.' });
+    }
     if (!restaurant_id || !email || !first_name || !last_name || !payment_method) return res.status(400).json({ error: 'Missing merchant or customer data.' });
     if (!['card', 'wallet'].includes(payment_method)) return res.status(400).json({ error: 'payment_method must be card or wallet.' });
     if (payment_method === 'wallet' && !phone_number) return res.status(400).json({ error: 'Phone number is required for wallet payments.' });
 
     // The browser cannot choose the amount: read the merchant's configured subscription price.
-    const [merchantSnap, directSubSnap] = await Promise.all([
-      db.collection('restaurants').doc(String(restaurant_id)).get(),
-      db.collection('subscriptions').doc(String(restaurant_id)).get(),
-    ]);
+    const directSubSnap = await db.collection('subscriptions').doc(String(restaurant_id)).get();
     let sub = directSubSnap.exists ? directSubSnap.data() : null;
     if (!sub) {
       const matchSub = await db.collection('subscriptions').where('restaurantId', '==', String(restaurant_id)).limit(1).get();
       if (!matchSub.empty) sub = matchSub.docs[0].data();
     }
     if (!merchantSnap.exists && !sub) return res.status(404).json({ error: 'Merchant or subscription was not found.' });
-    const merchant = merchantSnap.exists ? merchantSnap.data() : {};
+    const merchant = merchantData;
     const price = Number(sub?.price ?? sub?.subscriptionPrice ?? sub?.subscription?.price ??
       merchant.subscriptionPrice ?? merchant.subscription?.price ?? merchant.price);
     const amountInCents = Math.round(price * 100);
