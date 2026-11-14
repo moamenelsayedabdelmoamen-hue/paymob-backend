@@ -107,6 +107,64 @@ async function applyVerifiedWebhook(obj) {
       throw new Error('Paymob integration does not match the pending payment.');
     }
 
+    let subscriptionRef = null;
+    let restaurantRef = null;
+    let subscriptionData = {};
+    if (status === 'success') {
+      const restaurantId = String(expected.restaurantId || '');
+      if (!restaurantId) throw new Error('Payment is not linked to a merchant.');
+      const captainsByPrice = { 40000: 2, 80000: 4, 120000: 6, 160000: 8 };
+      const captainsCount = captainsByPrice[amount];
+      if (!captainsCount) throw new Error('Paid amount does not match an official captain package.');
+
+      subscriptionRef = db.collection('subscriptions').doc(restaurantId);
+      restaurantRef = db.collection('restaurants').doc(restaurantId);
+      const [subscriptionSnap, restaurantSnap] = await Promise.all([
+        tx.get(subscriptionRef),
+        tx.get(restaurantRef),
+      ]);
+      subscriptionData = subscriptionSnap.exists ? subscriptionSnap.data() : {};
+      const restaurantData = restaurantSnap.exists ? restaurantSnap.data() : {};
+      const price = amount / 100;
+      const plan = `${captainsCount} كابتن - ${price} جنيه`;
+      const today = new Date();
+      const startDate = today.toISOString().slice(0, 10);
+      const end = new Date(today);
+      end.setUTCDate(end.getUTCDate() + 30);
+      const endDate = end.toISOString().slice(0, 10);
+      const merchantName = expected.restaurantName || restaurantData.name || restaurantData.nameAr ||
+        restaurantData.merchantName || restaurantData.restaurantName || '';
+
+      tx.set(subscriptionRef, {
+        restaurantId,
+        restaurantName: merchantName,
+        plan,
+        captainsCount,
+        price,
+        startDate,
+        endDate,
+        status: 'Active',
+        paymentOrderId: orderId,
+        paymentTransactionId: transactionId,
+        updatedAt: timestamp,
+        ...(subscriptionData.createdAt ? {} : { createdAt: timestamp }),
+      }, { merge: true });
+
+      if (restaurantSnap.exists) {
+        tx.update(restaurantRef, {
+          subscriptionStatus: 'Active',
+          subscriptionPlan: plan,
+          captainsCount,
+          subscriptionPrice: price,
+          subscriptionStartDate: startDate,
+          startDate,
+          subscriptionEndDate: endDate,
+          endDate,
+          updatedAt: timestamp,
+        });
+      }
+    }
+
     tx.update(paymentRef, {
       transactionId,
       status,
