@@ -5,16 +5,19 @@ const fs = require('fs');
 let firestore = null;
 
 function initializeFirebase() {
-  const secretFile = process.env.FIREBASE_SERVICE_ACCOUNT_FILE || '/etc/secrets/firebase-service-account.json';
+  const configuredSecretFile = process.env.FIREBASE_SERVICE_ACCOUNT_FILE;
+  const secretCandidates = [configuredSecretFile, '/etc/secrets/firebase-service-account.json', '/etc/secrets/Firebase', '/etc/secrets/firebase']
+    .filter(Boolean);
+  const secretFile = secretCandidates.find((candidate) => fs.existsSync(candidate));
   const encodedCredentials = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
 
-  if (!fs.existsSync(secretFile) && !encodedCredentials) {
+  if (!secretFile && !encodedCredentials) {
     console.warn('⚠️ Firebase is not configured. Add the Render secret file or FIREBASE_SERVICE_ACCOUNT_BASE64.');
     return null;
   }
 
   try {
-    const credentialsJson = fs.existsSync(secretFile)
+    const credentialsJson = secretFile
       ? fs.readFileSync(secretFile, 'utf8')
       : Buffer.from(encodedCredentials, 'base64').toString('utf8');
     const serviceAccount = JSON.parse(credentialsJson);
